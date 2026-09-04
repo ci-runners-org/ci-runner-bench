@@ -51,14 +51,6 @@ d=$(elapsed "$t0" "$t1")
 json_add net_download_s "$d"
 json_add net_download_mbps "$(python3 -c "print(round(500/$d,1)) if $d>0 else print('null')")"
 
-# --- T2 cache payload build. The save and restore are timed by the workflow steps.
-mkdir -p "$HOME/.bench-cache/payload"
-t0=$(now)
-dd if=/dev/urandom of="$HOME/.bench-cache/payload/blob" bs=1M count="$PAYLOAD_MB" status=none
-t1=$(now)
-json_add payload_write_s "$(elapsed "$t0" "$t1")"
-json_add payload_mb "$PAYLOAD_MB"
-
 {
   echo "{"
   cat "$OUT.parts"

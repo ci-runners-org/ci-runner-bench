@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 concurrency:
   group: seed
@@ -110,3 +109,36 @@ jobs:
         env:
           CACHE_MODE: warm
         run: ./scripts/run_workload.sh w4
+
+  seed-cache-payload:
+    name: "seed|${{ matrix.runner.vendor }}|t2payload"
+    runs-on: ${{ matrix.runner.label }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - { vendor: github, label: ubuntu-24.04 }
+          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
+          - { vendor: namespace, label: namespace-profile-bench-4x16 }
+          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runner-facts
+
+      # actions/cache restores first and skips the save on a hit, so re-running
+      # seed.yml is safe and never duplicates the entry.
+      - name: Seed the cache-throughput payload
+        id: payload
+        uses: actions/cache@v4
+        with:
+          path: ~/.bench-cache/payload
+          key: t2-${{ matrix.runner.vendor }}-v1
+
+      - name: Build the payload on a miss
+        if: steps.payload.outputs.cache-hit != 'true'
+        run: ./scripts/make_payload.sh
+
+      - name: Report payload size
+        run: du -sm ~/.bench-cache/payload

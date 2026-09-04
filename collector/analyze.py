@@ -21,7 +21,7 @@ from collections import defaultdict
 BASELINE = "github"
 VENDORS = ["blacksmith", "namespace", "warpbuild"]
 BOOTSTRAP = 10_000
-PAYLOAD_MB = 1024
+PAYLOAD_MB = 512
 
 # USD per minute, 4 vCPU Linux x64. Fetched 2026-09-04. Re-check before
 # publishing. GitHub is priced as a private repo on a larger runner, which is
@@ -164,7 +164,8 @@ def gather(jobs: list[dict], steps: list[dict]) -> dict:
             store["cache_restore_s"][vendor].append(seconds)
             if seconds > 0:
                 store["cache_restore_mbps"][vendor].append(PAYLOAD_MB / seconds)
-        elif name == "Save cache payload":
+        elif name in ("Save cache payload",
+                      "Post Seed the cache-throughput payload"):
             store["cache_save_s"][vendor].append(seconds)
             if seconds > 0:
                 store["cache_save_mbps"][vendor].append(PAYLOAD_MB / seconds)

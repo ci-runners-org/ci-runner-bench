@@ -13,31 +13,41 @@ they are done.
 
 | # | Task | Where | Time |
 | --- | --- | --- | --- |
-| 1 | Create a GitHub organization with a name that does not reference BrowserStack | github.com/organizations/plan | 5 min |
-| 2 | Create a **public** repository `ci-runner-bench` in that organization | GitHub | 2 min |
+| 1 | ~~Create a GitHub organization~~ Done: `ci-runners-org` | GitHub | done |
+| 2 | ~~Create a public repository~~ Done: `ci-runners-org/ci-runner-bench`, public, harness pushed | GitHub | done |
 | 3 | Sign up for Blacksmith with the evaluation mailbox, install its GitHub App on the org, grant access to the repository | blacksmith.sh | 10 min |
 | 4 | Sign up for Namespace, install its GitHub App, create a runner profile named `bench-4x16` with 4 vCPU and 16 GB Linux amd64 | namespace.so | 15 min |
 | 5 | Sign up for WarpBuild, install its GitHub App, confirm the `warp-ubuntu-latest-x64-4x` runner is offered | warpbuild.com | 10 min |
 
-Also create a fine-grained personal access token with `actions: read` and
-`contents: read` on the new repository. The collector needs it.
+The collector needs a token with `actions: read`. Your existing `gh` login
+already carries the `repo` scope, which covers it:
+
+```bash
+export GITHUB_TOKEN=$(gh auth token)
+```
 
 RunsOn is out of scope for the weekend. Its trial takes payment details and it
 bills EC2 in your own AWS account, so it cannot be run on a free tier.
 
-## Part 2: push the harness
+## Part 2: state of the repository
+
+The harness is already pushed to `ci-runners-org/ci-runner-bench` on `main`.
+Actions is enabled and all four workflows are registered.
+
+`arm-a` and `arm-b` are **disabled on purpose**. Their crons would otherwise
+fire before the vendor accounts exist, queue 27 jobs against labels that do not
+resolve and pollute the first data. Enable them in Part 8, after the dry run
+passes.
 
 ```bash
-cd harness
-git init -b main
-git add .
-git commit -m "chore: add CI runner benchmark harness"
-git remote add origin git@github.com:<YOUR-ORG>/ci-runner-bench.git
-git push -u origin main
+gh workflow list --repo ci-runners-org/ci-runner-bench --all
 ```
 
-Then in the repository settings enable Actions and set workflow permissions to
-read and write, because `arm-a.yml` deletes its own transient cache entries.
+The organization disables write permissions for the workflow token, so the
+harness never writes through `GITHUB_TOKEN`. Nothing needs changing. If you
+later want the cache-usage report to also prune entries, an owner must set
+Organization settings, Actions, General, Workflow permissions to read and
+write. That is optional.
 
 ## Part 3: confirm the runner labels
 
@@ -74,8 +84,8 @@ Run the cheapest job on every runner first. This proves the labels, the images
 and the checkout path without spending the budget.
 
 ```bash
-gh workflow run burst.yml --repo <ORG>/ci-runner-bench
-gh run watch --repo <ORG>/ci-runner-bench
+gh workflow run burst.yml --repo ci-runners-org/ci-runner-bench
+gh run watch --repo ci-runners-org/ci-runner-bench
 ```
 
 Expected: 80 jobs, all green, under 3 minutes of billable time per vendor.
@@ -85,19 +95,23 @@ Failure modes and what they mean:
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | Job stuck on "Waiting for a runner" | Label is wrong, or the vendor app has no access to the repository | Fix the label, or re-check the app installation scope |
-| `Resource not accessible by integration` | Workflow permissions are read-only | Settings, Actions, General, set read and write |
+| `Resource not accessible by integration` | A step is trying to write through `GITHUB_TOKEN`, which this organization forbids | Report it. The harness is designed to need read access only, so this means a step regressed |
 | Vendor job fails at checkout | Vendor image lacks git or the runner has no network egress | Raise with the vendor, or drop that vendor |
 
 ## Part 6: seed the warm caches, Friday about 21:00
 
 ```bash
-gh workflow run seed.yml --repo <ORG>/ci-runner-bench
+gh workflow run seed.yml --repo ci-runners-org/ci-runner-bench
 ```
 
-This runs W1 and W2 cold on all four runners, then saves `~/.bench-cache`
-under the stable keys that `arm-a.yml` restores. It also populates the W4
-Docker layer cache. Budget about 45 minutes of wall-clock and roughly 60
-billable minutes per vendor.
+This does three things on all four runners. It runs W1 and W2 cold and saves
+`~/.bench-cache` under the stable keys that `arm-a.yml` restores. It populates
+the W4 Docker layer cache. It builds the 512 MB cache-throughput payload under
+the fixed key `t2-<vendor>-v1`.
+
+Budget about 45 minutes of wall-clock and roughly 65 billable minutes per
+vendor. Re-running `seed.yml` is safe. The payload job restores before it
+saves, so it never duplicates the entry.
 
 Check the reported cache size in each job log. Expected totals:
 
@@ -133,11 +147,14 @@ same-wall-clock control that the whole design rests on.
 
 ## Part 8: open the collection window, Friday about 23:00
 
-Trigger one full arm A and arm B slot by hand and watch it finish.
+Enable the two cron workflows, then trigger one full slot of each by hand and
+watch it finish.
 
 ```bash
-gh workflow run arm-a.yml --repo <ORG>/ci-runner-bench
-gh workflow run arm-b.yml --repo <ORG>/ci-runner-bench
+gh workflow enable arm-a --repo ci-runners-org/ci-runner-bench
+gh workflow enable arm-b --repo ci-runners-org/ci-runner-bench
+gh workflow run arm-a.yml --repo ci-runners-org/ci-runner-bench
+gh workflow run arm-b.yml --repo ci-runners-org/ci-runner-bench
 ```
 
 All warm jobs must report a cache hit. If a warm job fails with "No warm cache
@@ -149,7 +166,7 @@ After this succeeds, the cron takes over. Nothing more is needed until Sunday.
 ## Part 9: burst tests, Saturday and Sunday about 11:00
 
 ```bash
-gh workflow run burst.yml --repo <ORG>/ci-runner-bench
+gh workflow run burst.yml --repo ci-runners-org/ci-runner-bench
 ```
 
 Run it twice, once each day, so the queue-time claims get two independent
@@ -159,8 +176,8 @@ busy vendor pool would inflate the queue times.
 ## Part 10: analysis, Sunday 20:00 and Monday 02:00
 
 ```bash
-export GITHUB_TOKEN=<your PAT>
-export BENCH_REPO=<ORG>/ci-runner-bench
+export GITHUB_TOKEN=$(gh auth token)
+export BENCH_REPO=ci-runners-org/ci-runner-bench
 python3 collector/pull_jobs.py
 python3 collector/analyze.py
 cat results/tables/verdicts.md
@@ -179,23 +196,36 @@ last slot.
 GitHub allows 10 GB of Actions cache per repository and evicts the least
 recently used entry beyond that. Three of the four runners write to GitHub's
 cache store, because only Blacksmith intercepts `actions/cache` and redirects
-it to its own backend. The harness therefore holds the footprint down in three
-ways.
+it to its own backend. The organization also blocks write permissions for the
+workflow token, so nothing can be deleted at runtime. The harness therefore
+keeps a fixed, bounded footprint.
+
+| Entry | Per runner | GitHub-store runners | Total |
+| --- | --- | --- | --- |
+| W1 warm seed, yarn cache | 0.7 to 1.2 GB | 3 | up to 3.6 GB |
+| W2 warm seed, `CARGO_HOME` only | 0.4 to 0.6 GB | 3 | up to 1.8 GB |
+| W4 Docker layer cache | about 0.4 GB | 3 | about 1.2 GB |
+| Cache-throughput payload, fixed key | 0.5 GB | 3 | 1.5 GB |
+| Steady-state total | | | about 7 to 8 GB |
+
+Four choices hold that line.
 
 1. The Rust target directory lives in `RUNNER_TEMP`, not in the cached tree.
    Compile work is then identical across the cold and warm arms, which isolates
    CPU for the speed claims.
-2. The W4 dependency set is trimmed to about 400 MB, so the Docker layer cache
-   stays small.
-3. The 1 GB cache-throughput payload is deleted at the end of every
-   `cache-restore` job.
+2. The W4 dependency set is trimmed to about 400 MB.
+3. The throughput payload uses one fixed key per runner, seeded once, restored
+   read-only by every slot. A per-slot key would have added 0.5 GB every three
+   hours and evicted the warm seeds within a day.
+4. The warm arm never saves. It only restores, so the payload it measures stays
+   byte-identical across all 17 slots.
 
-Expected steady state is 5 to 7 GB. Every `cache-restore` job prints the
-repository cache usage. If it approaches 10 GB, delete the Docker scopes:
+Every `cache-restore` job prints the repository cache usage. If it approaches
+10 GB, prune by hand from your laptop:
 
 ```bash
-gh cache list --repo <ORG>/ci-runner-bench --limit 100
-gh cache delete <key> --repo <ORG>/ci-runner-bench
+gh cache list --repo ci-runners-org/ci-runner-bench --limit 100
+gh cache delete <key> --repo ci-runners-org/ci-runner-bench
 ```
 
 ## What each workload measures
@@ -223,3 +253,8 @@ gh cache delete <key> --repo <ORG>/ci-runner-bench
 6. Blacksmith Docker layer caching and WarpBuild Docker builders are paid
    add-ons. W4 uses the GitHub Actions cache backend on every runner, so B3 is
    tested on the free path only.
+7. Cache restore throughput is measured every slot. Save throughput has only
+   one sample per runner, from the seed run, because saving every slot would
+   breach the cache budget. Treat save numbers as indicative.
+8. The payload is 512 MB, not the 4 GB that RunsOn publishes its cache figures
+   against. Compare the ratio to GitHub, not the absolute seconds.

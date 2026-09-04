@@ -12,7 +12,7 @@ on:
 
 permissions:
   contents: read
-  actions: write
+  actions: read
 
 concurrency:
   group: arm-a
@@ -150,13 +150,6 @@ jobs:
           export CACHE_PAYLOAD_MB
           ./scripts/synthetic.sh
 
-      # The save step duration is the cache upload time for a known payload.
-      - name: Save cache payload
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.bench-cache/payload
-          key: t2-${{ matrix.runner.vendor }}-${{ github.run_id }}
-
       - name: Upload synthetic results
         uses: actions/upload-artifact@v4
         with:
@@ -166,7 +159,6 @@ jobs:
 
   cache-restore:
     name: "a|${{ matrix.runner.vendor }}|t2restore|na"
-    needs: synthetic
     runs-on: ${{ matrix.runner.label }}
     timeout-minutes: 20
     strategy:
@@ -183,27 +175,23 @@ jobs:
       - uses: ./.github/actions/runner-facts
 
       # This step duration divided by the payload size is restore throughput.
+      # The key is fixed and seeded once by seed.yml. Restoring read-only keeps
+      # one entry per runner instead of one per slot, so the repository stays
+      # inside GitHub's 10 GB cache limit without any runtime deletion. Runtime
+      # deletion is impossible here because the organization disables write
+      # permissions for the workflow token.
       - name: Restore cache payload
         id: t2
         uses: actions/cache/restore@v4
         with:
           path: ~/.bench-cache/payload
-          key: t2-${{ matrix.runner.vendor }}-${{ github.run_id }}
+          key: t2-${{ matrix.runner.vendor }}-v1
           fail-on-cache-miss: true
 
       - name: Verify payload size
         run: |
           set -euo pipefail
           du -sm ~/.bench-cache/payload
-
-      # The payload is transient. Without this the repository passes GitHub's
-      # 10 GB cache limit within a day and the warm seeds get evicted.
-      - name: Delete the payload cache
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          KEY: t2-${{ matrix.runner.vendor }}-${{ github.run_id }}
-        run: gh cache delete "$KEY" --repo "$GITHUB_REPOSITORY" || true
 
       - name: Report repository cache usage
         if: always()

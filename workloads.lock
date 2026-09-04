@@ -11,5 +11,8 @@ W2_SHA=3fce3b5bb0236da2df6d99672afb8a719642eca7
 # Replace the tag with an immutable digest on setup day, then never change it.
 PULL_IMAGE=node:22-bookworm
 
-# Payload size in MB for the cache round-trip test (claim B2, N1, R3).
-CACHE_PAYLOAD_MB=1024
+# Payload size in MB for the cache restore test (claims B2, N1).
+# Held at 512 so the three runners that write to GitHub's cache store stay
+# inside the 10 GB per-repository limit. Seeded once by seed.yml under a fixed
+# key, then restored read-only by every arm-a slot.
+CACHE_PAYLOAD_MB=512
