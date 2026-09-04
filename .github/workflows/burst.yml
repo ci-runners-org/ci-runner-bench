@@ -1,0 +1,44 @@
+name: burst
+
+# T3: queue time and boot time under a simultaneous burst.
+# Claims tested: Blacksmith B4 "boot in under 3 seconds", WarpBuild W3c
+# "cold start under 10 seconds with warm pools", and the page's report of
+# GitHub-hosted queue waits.
+#
+# Each job does almost no work. The measurement is created_at to started_at,
+# read from the Jobs API by collector/pull_jobs.py.
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobs_per_runner:
+        description: "Jobs per runner. Keep at 20 for the free-tier plan."
+        type: string
+        default: "20"
+
+permissions:
+  contents: read
+
+jobs:
+  burst:
+    name: "burst|${{ matrix.runner.vendor }}|${{ matrix.idx }}"
+    runs-on: ${{ matrix.runner.label }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      max-parallel: 100
+      matrix:
+        runner:
+          - { vendor: github, label: ubuntu-24.04 }
+          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
+          - { vendor: namespace, label: namespace-profile-bench-4x16 }
+          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+        idx: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+              11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+
+    steps:
+      - name: Report identity and exit
+        run: |
+          echo "vendor=${{ matrix.runner.vendor }} idx=${{ matrix.idx }}"
+          echo "runner=${RUNNER_NAME:-unknown} nproc=$(nproc)"
+          echo "boot_marker=$(date -u +%Y-%m-%dT%H:%M:%SZ)"

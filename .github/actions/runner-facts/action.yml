@@ -1,0 +1,21 @@
+name: runner-facts
+description: Record the hardware and environment of the runner that executes this job.
+runs:
+  using: composite
+  steps:
+    - name: Collect runner facts
+      shell: bash
+      run: |
+        set -uo pipefail
+        echo "::group::runner facts"
+        echo "cpu_model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)"
+        echo "cpu_mhz=$(grep -m1 'cpu MHz' /proc/cpuinfo | cut -d: -f2- | xargs)"
+        echo "nproc=$(nproc)"
+        echo "mem_total_kb=$(awk '/MemTotal/{print $2}' /proc/meminfo)"
+        echo "kernel=$(uname -r)"
+        echo "os=$(. /etc/os-release; echo "$PRETTY_NAME")"
+        echo "disk_root=$(df -BM --output=size / | tail -1 | tr -d ' M')"
+        echo "runner_name=${RUNNER_NAME:-unknown}"
+        echo "runner_arch=${RUNNER_ARCH:-unknown}"
+        lscpu | sed 's/^/lscpu: /' || true
+        echo "::endgroup::"

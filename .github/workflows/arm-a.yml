@@ -1,0 +1,214 @@
+name: arm-a
+
+# Arm A is the drop-in path. Every runner uses actions/cache, the same
+# workload commands and the same toolchain versions. Only the runner label
+# changes. One workflow run fans out across all runners, so every vendor
+# faces the same time of day, registry load and network state.
+
+on:
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: arm-a
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22.11.0"
+  RUST_TOOLCHAIN: "stable"
+
+jobs:
+  bench:
+    name: "a|${{ matrix.runner.vendor }}|${{ matrix.workload }}|${{ matrix.cache }}"
+    runs-on: ${{ matrix.runner.label }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - { vendor: github, label: ubuntu-24.04 }
+          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
+          - { vendor: namespace, label: namespace-profile-bench-4x16 }
+          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+        workload: [w1, w2, w4, w5]
+        cache: [cold, warm]
+        exclude:
+          # W5 installs nothing, so a warm arm would be identical to cold.
+          - workload: w5
+            cache: warm
+
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Runner facts
+        uses: ./.github/actions/runner-facts
+
+      - name: Resolve workload pin
+        id: pin
+        run: |
+          set -euo pipefail
+          source workloads.lock
+          case "${{ matrix.workload }}" in
+            w1) echo "repo=$W1_REPO" >> "$GITHUB_OUTPUT"
+                echo "sha=$W1_SHA"   >> "$GITHUB_OUTPUT" ;;
+            w2) echo "repo=$W2_REPO" >> "$GITHUB_OUTPUT"
+                echo "sha=$W2_SHA"   >> "$GITHUB_OUTPUT" ;;
+            *)  echo "repo=" >> "$GITHUB_OUTPUT"
+                echo "sha="  >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Checkout workload repository
+        if: steps.pin.outputs.repo != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.sha }}
+          path: work
+
+      - name: Set up Node
+        if: matrix.workload == 'w1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Rust
+        if: matrix.workload == 'w2'
+        run: |
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal --no-self-update
+          rustup default "${RUST_TOOLCHAIN}"
+          cargo --version
+          rustc --version
+
+      - name: Set up buildx
+        if: matrix.workload == 'w4'
+        uses: docker/setup-buildx-action@v3
+
+      # Warm arm restores only. It never saves, so the payload stays exactly
+      # what seed.yml produced and every slot restores an identical cache.
+      - name: Restore cache
+        if: matrix.cache == 'warm' && matrix.workload != 'w4'
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.bench-cache
+          key: bench-a-${{ matrix.runner.vendor }}-${{ matrix.workload }}-v1
+
+      - name: Fail if the warm arm found no cache
+        if: matrix.cache == 'warm' && matrix.workload != 'w4' && steps.restore.outputs.cache-hit != 'true'
+        run: |
+          echo "No warm cache for ${{ matrix.workload }} on ${{ matrix.runner.vendor }}." >&2
+          echo "Run seed.yml for this runner before the collection window." >&2
+          exit 1
+
+      - name: Run workload
+        env:
+          CACHE_MODE: ${{ matrix.cache }}
+        run: ./scripts/run_workload.sh ${{ matrix.workload }}
+
+      - name: Pull large image
+        if: matrix.workload == 'w4'
+        run: ./scripts/pull_image.sh | tee image-pull.json
+
+      - name: Upload measurements
+        if: matrix.workload == 'w4'
+        uses: actions/upload-artifact@v4
+        with:
+          name: imagepull-${{ matrix.runner.vendor }}-${{ matrix.cache }}-${{ github.run_id }}
+          path: image-pull.json
+          retention-days: 7
+          if-no-files-found: warn
+
+  synthetic:
+    name: "a|${{ matrix.runner.vendor }}|t|na"
+    runs-on: ${{ matrix.runner.label }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - { vendor: github, label: ubuntu-24.04 }
+          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
+          - { vendor: namespace, label: namespace-profile-bench-4x16 }
+          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runner-facts
+
+      - name: Run synthetic tests
+        env:
+          OUT: synthetic.json
+        run: |
+          set -euo pipefail
+          source workloads.lock
+          export CACHE_PAYLOAD_MB
+          ./scripts/synthetic.sh
+
+      # The save step duration is the cache upload time for a known payload.
+      - name: Save cache payload
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.bench-cache/payload
+          key: t2-${{ matrix.runner.vendor }}-${{ github.run_id }}
+
+      - name: Upload synthetic results
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-${{ matrix.runner.vendor }}-${{ github.run_id }}
+          path: synthetic.json
+          retention-days: 7
+
+  cache-restore:
+    name: "a|${{ matrix.runner.vendor }}|t2restore|na"
+    needs: synthetic
+    runs-on: ${{ matrix.runner.label }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - { vendor: github, label: ubuntu-24.04 }
+          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
+          - { vendor: namespace, label: namespace-profile-bench-4x16 }
+          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runner-facts
+
+      # This step duration divided by the payload size is restore throughput.
+      - name: Restore cache payload
+        id: t2
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.bench-cache/payload
+          key: t2-${{ matrix.runner.vendor }}-${{ github.run_id }}
+          fail-on-cache-miss: true
+
+      - name: Verify payload size
+        run: |
+          set -euo pipefail
+          du -sm ~/.bench-cache/payload
+
+      # The payload is transient. Without this the repository passes GitHub's
+      # 10 GB cache limit within a day and the warm seeds get evicted.
+      - name: Delete the payload cache
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: t2-${{ matrix.runner.vendor }}-${{ github.run_id }}
+        run: gh cache delete "$KEY" --repo "$GITHUB_REPOSITORY" || true
+
+      - name: Report repository cache usage
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/cache/usage" \
+            --jq '"cache_bytes=\(.active_caches_size_in_bytes) caches=\(.active_caches_count)"' || true

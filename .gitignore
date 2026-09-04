@@ -1,0 +1,4 @@
+results/raw/*.csv
+results/raw/*.json
+results/tables/*
+node_modules/

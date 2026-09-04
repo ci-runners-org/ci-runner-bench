@@ -1,0 +1,15 @@
+# Pinned workload inputs. Sourced by scripts/run_workload.sh.
+# Fetched 2026-09-04. Do not change during a collection window.
+
+W1_REPO=excalidraw/excalidraw
+W1_SHA=214cd6e6e8ac3ad6b68486aa7aa7241abdf9445f
+
+W2_REPO=BurntSushi/ripgrep
+W2_SHA=3fce3b5bb0236da2df6d99672afb8a719642eca7
+
+# Large public image for the pull-throughput test (claim N2).
+# Replace the tag with an immutable digest on setup day, then never change it.
+PULL_IMAGE=node:22-bookworm
+
+# Payload size in MB for the cache round-trip test (claim B2, N1, R3).
+CACHE_PAYLOAD_MB=1024

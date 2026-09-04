@@ -1,0 +1,112 @@
+name: seed
+
+# Populates the warm caches that arm-a restores. Run this once per runner
+# before the collection window opens, and again only if a cache is evicted.
+# Each job runs the workload cold, then saves ~/.bench-cache under the stable
+# key that arm-a reads.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: seed
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22.11.0"
+  RUST_TOOLCHAIN: "stable"
+
+jobs:
+  seed:
+    name: "seed|${{ matrix.runner.vendor }}|${{ matrix.workload }}"
+    runs-on: ${{ matrix.runner.label }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - { vendor: github, label: ubuntu-24.04 }
+          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
+          - { vendor: namespace, label: namespace-profile-bench-4x16 }
+          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+        workload: [w1, w2]
+
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Runner facts
+        uses: ./.github/actions/runner-facts
+
+      - name: Resolve workload pin
+        id: pin
+        run: |
+          set -euo pipefail
+          source workloads.lock
+          case "${{ matrix.workload }}" in
+            w1) echo "repo=$W1_REPO" >> "$GITHUB_OUTPUT"
+                echo "sha=$W1_SHA"   >> "$GITHUB_OUTPUT" ;;
+            w2) echo "repo=$W2_REPO" >> "$GITHUB_OUTPUT"
+                echo "sha=$W2_SHA"   >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Checkout workload repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.sha }}
+          path: work
+
+      - name: Set up Node
+        if: matrix.workload == 'w1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Rust
+        if: matrix.workload == 'w2'
+        run: |
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal --no-self-update
+          rustup default "${RUST_TOOLCHAIN}"
+          cargo --version
+
+      - name: Run workload cold
+        env:
+          CACHE_MODE: cold
+        run: ./scripts/run_workload.sh ${{ matrix.workload }}
+
+      - name: Report cache size
+        run: du -sm ~/.bench-cache || true
+
+      - name: Save warm cache
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.bench-cache
+          key: bench-a-${{ matrix.runner.vendor }}-${{ matrix.workload }}-v1
+
+  seed-docker:
+    name: "seed|${{ matrix.runner.vendor }}|w4"
+    runs-on: ${{ matrix.runner.label }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - { vendor: github, label: ubuntu-24.04 }
+          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
+          - { vendor: namespace, label: namespace-profile-bench-4x16 }
+          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runner-facts
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Populate the Docker layer cache
+        env:
+          CACHE_MODE: warm
+        run: ./scripts/run_workload.sh w4

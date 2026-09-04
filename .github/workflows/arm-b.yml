@@ -1,0 +1,148 @@
+name: arm-b
+
+# Arm B is the tuned path. Each vendor uses its own cache action instead of
+# actions/cache. The gap between arm A and arm B measures how much developer
+# effort the vendor needs before its claims hold.
+#
+# Blacksmith has no arm B. Its documentation states that actions/cache is
+# intercepted transparently and that the useblacksmith/* cache forks are
+# archived, so arm A already exercises the Blacksmith cache backend.
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: arm-b
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22.11.0"
+  RUST_TOOLCHAIN: "stable"
+
+jobs:
+  namespace:
+    name: "b|namespace|${{ matrix.workload }}|warm"
+    runs-on: namespace-profile-bench-4x16
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        workload: [w1, w2]
+
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Runner facts
+        uses: ./.github/actions/runner-facts
+
+      - name: Resolve workload pin
+        id: pin
+        run: |
+          set -euo pipefail
+          source workloads.lock
+          case "${{ matrix.workload }}" in
+            w1) echo "repo=$W1_REPO" >> "$GITHUB_OUTPUT"
+                echo "sha=$W1_SHA"   >> "$GITHUB_OUTPUT" ;;
+            w2) echo "repo=$W2_REPO" >> "$GITHUB_OUTPUT"
+                echo "sha=$W2_SHA"   >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Checkout workload repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.sha }}
+          path: work
+
+      - name: Set up Node
+        if: matrix.workload == 'w1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Rust
+        if: matrix.workload == 'w2'
+        run: |
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal --no-self-update
+          rustup default "${RUST_TOOLCHAIN}"
+          cargo --version
+
+      # Cache Volumes need no key. The action bind-mounts the path, so restore
+      # is a mount rather than a download. This is the claim under test (N1).
+      - name: Namespace cache volume
+        uses: namespacelabs/nscloud-cache-action@v1
+        with:
+          path: ~/.bench-cache
+
+      - name: Run workload
+        env:
+          CACHE_MODE: warm
+        run: ./scripts/run_workload.sh ${{ matrix.workload }}
+
+  warpbuild:
+    name: "b|warpbuild|${{ matrix.workload }}|warm"
+    runs-on: warp-ubuntu-latest-x64-4x
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        workload: [w1, w2]
+
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Runner facts
+        uses: ./.github/actions/runner-facts
+
+      - name: Resolve workload pin
+        id: pin
+        run: |
+          set -euo pipefail
+          source workloads.lock
+          case "${{ matrix.workload }}" in
+            w1) echo "repo=$W1_REPO" >> "$GITHUB_OUTPUT"
+                echo "sha=$W1_SHA"   >> "$GITHUB_OUTPUT" ;;
+            w2) echo "repo=$W2_REPO" >> "$GITHUB_OUTPUT"
+                echo "sha=$W2_SHA"   >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Checkout workload repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.sha }}
+          path: work
+
+      - name: Set up Node
+        if: matrix.workload == 'w1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Rust
+        if: matrix.workload == 'w2'
+        run: |
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal --no-self-update
+          rustup default "${RUST_TOOLCHAIN}"
+          cargo --version
+
+      # WarpCache is a drop-in replacement for actions/cache that writes to
+      # the WarpBuild backend instead of GitHub's.
+      - name: WarpBuild cache
+        uses: WarpBuilds/cache@v1
+        with:
+          path: ~/.bench-cache
+          key: bench-b-warpbuild-${{ matrix.workload }}-v1
+
+      - name: Run workload
+        env:
+          CACHE_MODE: warm
+        run: ./scripts/run_workload.sh ${{ matrix.workload }}
