@@ -4,6 +4,10 @@ name: arm-a
 # workload commands and the same toolchain versions. Only the runner label
 # changes. One workflow run fans out across all runners, so every vendor
 # faces the same time of day, registry load and network state.
+#
+# The vendors input lets a run target only the integrations that are live.
+# A vendor whose runners never claim a job would otherwise leave seven jobs
+# queued per slot for 24 hours.
 
 on:
   # Compressed cadence. The collection window is one evening, not two days,
@@ -12,6 +16,11 @@ on:
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
+    inputs:
+      vendors:
+        description: "Comma-separated vendors to measure"
+        required: false
+        default: "github,blacksmith,namespace,warpbuild"
 
 permissions:
   contents: read
@@ -26,18 +35,26 @@ env:
   RUST_TOOLCHAIN: "stable"
 
 jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    outputs:
+      runners: ${{ steps.m.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        uses: ./.github/actions/runner-matrix
+        with:
+          vendors: ${{ inputs.vendors || 'github,blacksmith,namespace,warpbuild' }}
+
   bench:
     name: "a|${{ matrix.runner.vendor }}|${{ matrix.workload }}|${{ matrix.cache }}"
+    needs: setup
     runs-on: ${{ matrix.runner.label }}
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - { vendor: github, label: ubuntu-24.04 }
-          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
-          - { vendor: namespace, label: namespace-profile-bench-4x16 }
-          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+        runner: ${{ fromJSON(needs.setup.outputs.runners) }}
         workload: [w1, w2, w4, w5]
         cache: [cold, warm]
         exclude:
@@ -54,10 +71,12 @@ jobs:
 
       - name: Resolve workload pin
         id: pin
+        env:
+          WORKLOAD: ${{ matrix.workload }}
         run: |
           set -euo pipefail
           source workloads.lock
-          case "${{ matrix.workload }}" in
+          case "$WORKLOAD" in
             w1) echo "repo=$W1_REPO" >> "$GITHUB_OUTPUT"
                 echo "sha=$W1_SHA"   >> "$GITHUB_OUTPUT" ;;
             w2) echo "repo=$W2_REPO" >> "$GITHUB_OUTPUT"
@@ -104,15 +123,19 @@ jobs:
 
       - name: Fail if the warm arm found no cache
         if: matrix.cache == 'warm' && matrix.workload != 'w4' && steps.restore.outputs.cache-hit != 'true'
+        env:
+          WORKLOAD: ${{ matrix.workload }}
+          VENDOR: ${{ matrix.runner.vendor }}
         run: |
-          echo "No warm cache for ${{ matrix.workload }} on ${{ matrix.runner.vendor }}." >&2
+          echo "No warm cache for $WORKLOAD on $VENDOR." >&2
           echo "Run seed.yml for this runner before the collection window." >&2
           exit 1
 
       - name: Run workload
         env:
           CACHE_MODE: ${{ matrix.cache }}
-        run: ./scripts/run_workload.sh ${{ matrix.workload }}
+          WORKLOAD: ${{ matrix.workload }}
+        run: ./scripts/run_workload.sh "$WORKLOAD"
 
       - name: Pull large image
         if: matrix.workload == 'w4'
@@ -129,16 +152,13 @@ jobs:
 
   synthetic:
     name: "a|${{ matrix.runner.vendor }}|t|na"
+    needs: setup
     runs-on: ${{ matrix.runner.label }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - { vendor: github, label: ubuntu-24.04 }
-          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
-          - { vendor: namespace, label: namespace-profile-bench-4x16 }
-          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+        runner: ${{ fromJSON(needs.setup.outputs.runners) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -162,16 +182,13 @@ jobs:
 
   cache-restore:
     name: "a|${{ matrix.runner.vendor }}|t2restore|na"
+    needs: setup
     runs-on: ${{ matrix.runner.label }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - { vendor: github, label: ubuntu-24.04 }
-          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
-          - { vendor: namespace, label: namespace-profile-bench-4x16 }
-          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+        runner: ${{ fromJSON(needs.setup.outputs.runners) }}
 
     steps:
       - uses: actions/checkout@v4

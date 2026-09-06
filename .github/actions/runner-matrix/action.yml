@@ -1,0 +1,69 @@
+name: runner-matrix
+description: >
+  Build the runner matrix from a comma-separated vendor list. Lets a run target
+  only the vendors that are currently live, so one dead integration cannot stall
+  every other measurement.
+
+inputs:
+  vendors:
+    description: "Comma-separated vendor list, e.g. github,blacksmith"
+    required: false
+    default: "github,blacksmith,namespace,warpbuild"
+
+outputs:
+  matrix:
+    description: "JSON array of {vendor,label} objects"
+    value: ${{ steps.build.outputs.matrix }}
+  count:
+    description: "Number of runners in the matrix"
+    value: ${{ steps.build.outputs.count }}
+
+runs:
+  using: composite
+  steps:
+    - id: build
+      shell: bash
+      env:
+        VENDORS: ${{ inputs.vendors }}
+      run: |
+        set -euo pipefail
+
+        # Single source of truth for labels. Change a label here and every
+        # workflow picks it up.
+        label_for() {
+          case "$1" in
+            github)     echo "ubuntu-24.04" ;;
+            blacksmith) echo "blacksmith-4vcpu-ubuntu-2404" ;;
+            namespace)  echo "namespace-profile-bench-4x16" ;;
+            warpbuild)  echo "warp-ubuntu-latest-x64-4x" ;;
+            *)          echo "" ;;
+          esac
+        }
+
+        entries=""
+        count=0
+        IFS=','
+        for v in $VENDORS; do
+          v="$(echo "$v" | tr -d '[:space:]')"
+          [ -z "$v" ] && continue
+
+          label="$(label_for "$v")"
+          if [ -z "$label" ]; then
+            echo "unknown vendor: $v" >&2
+            exit 1
+          fi
+
+          entries="${entries}{\"vendor\":\"${v}\",\"label\":\"${label}\"},"
+          count=$((count + 1))
+        done
+        unset IFS
+
+        if [ "$count" -eq 0 ]; then
+          echo "no vendors selected" >&2
+          exit 1
+        fi
+
+        matrix="[${entries%,}]"
+        echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+        echo "count=$count"   >> "$GITHUB_OUTPUT"
+        echo "matrix: $matrix"

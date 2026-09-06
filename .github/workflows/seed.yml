@@ -7,6 +7,11 @@ name: seed
 
 on:
   workflow_dispatch:
+    inputs:
+      vendors:
+        description: "Comma-separated vendors to seed"
+        required: false
+        default: "github,blacksmith,namespace,warpbuild"
 
 permissions:
   contents: read
@@ -20,18 +25,26 @@ env:
   RUST_TOOLCHAIN: "stable"
 
 jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    outputs:
+      runners: ${{ steps.m.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        uses: ./.github/actions/runner-matrix
+        with:
+          vendors: ${{ inputs.vendors || 'github,blacksmith,namespace,warpbuild' }}
+
   seed:
     name: "seed|${{ matrix.runner.vendor }}|${{ matrix.workload }}"
+    needs: setup
     runs-on: ${{ matrix.runner.label }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - { vendor: github, label: ubuntu-24.04 }
-          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
-          - { vendor: namespace, label: namespace-profile-bench-4x16 }
-          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+        runner: ${{ fromJSON(needs.setup.outputs.runners) }}
         workload: [w1, w2]
 
     steps:
@@ -89,16 +102,13 @@ jobs:
 
   seed-docker:
     name: "seed|${{ matrix.runner.vendor }}|w4"
+    needs: setup
     runs-on: ${{ matrix.runner.label }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - { vendor: github, label: ubuntu-24.04 }
-          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
-          - { vendor: namespace, label: namespace-profile-bench-4x16 }
-          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+        runner: ${{ fromJSON(needs.setup.outputs.runners) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -112,16 +122,13 @@ jobs:
 
   seed-cache-payload:
     name: "seed|${{ matrix.runner.vendor }}|t2payload"
+    needs: setup
     runs-on: ${{ matrix.runner.label }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - { vendor: github, label: ubuntu-24.04 }
-          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
-          - { vendor: namespace, label: namespace-profile-bench-4x16 }
-          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+        runner: ${{ fromJSON(needs.setup.outputs.runners) }}
 
     steps:
       - uses: actions/checkout@v4
