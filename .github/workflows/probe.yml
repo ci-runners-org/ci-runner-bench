@@ -1,0 +1,47 @@
+name: probe
+
+# Label probe. Each job claims one candidate runner label and exits at once.
+# A job that starts proves the label resolves and the vendor is activated.
+# A job that stays queued proves it does not.
+#
+# Run this whenever a vendor is connected, before spending budget on seed.yml.
+# Cancel the run after about three minutes, then read which jobs started.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: "probe|${{ matrix.vendor }}|${{ matrix.label }}"
+    runs-on: ${{ matrix.label }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { vendor: github, label: ubuntu-24.04 }
+
+          - { vendor: blacksmith, label: blacksmith }
+          - { vendor: blacksmith, label: blacksmith-2vcpu-ubuntu-2404 }
+          - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
+
+          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-2x }
+          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
+
+          - { vendor: namespace, label: nscloud }
+          - { vendor: namespace, label: nscloud-ubuntu-24.04-amd64-4x8 }
+          - { vendor: namespace, label: namespace-profile-bench-4x16 }
+
+    steps:
+      - name: Identify the machine that claimed this label
+        run: |
+          echo "label=${{ matrix.label }}"
+          echo "vendor=${{ matrix.vendor }}"
+          echo "runner_name=${RUNNER_NAME:-unknown}"
+          echo "nproc=$(nproc)"
+          echo "mem_gb=$(awk '/MemTotal/{printf "%.1f", $2/1048576}' /proc/meminfo)"
+          echo "cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)"
+          echo "os=$(. /etc/os-release; echo "$PRETTY_NAME")"

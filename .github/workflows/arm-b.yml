@@ -9,13 +9,14 @@ name: arm-b
 # archived, so arm A already exercises the Blacksmith cache backend.
 
 on:
+  # Compressed cadence, see arm-a. Hourly gives about 8 samples per cell.
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
-  actions: write
+  actions: read
 
 concurrency:
   group: arm-b

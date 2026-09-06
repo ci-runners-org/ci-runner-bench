@@ -6,8 +6,11 @@ name: arm-a
 # faces the same time of day, registry load and network state.
 
 on:
+  # Compressed cadence. The collection window is one evening, not two days,
+  # so slots run every 30 minutes to keep about 16 samples per cell. A slot
+  # takes roughly 12 minutes of wall clock, so slots never overlap.
   schedule:
-    - cron: "0 */3 * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 permissions:
