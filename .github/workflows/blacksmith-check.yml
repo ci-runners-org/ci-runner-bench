@@ -1,0 +1,33 @@
+name: blacksmith-check
+
+# Purpose: give the Blacksmith Migration Wizard one safe file to convert, and
+# act as a liveness check afterwards.
+#
+# The benchmark workflows use `runs-on: ${{ matrix.runner.label }}`, which the
+# wizard cannot resolve statically, so it reports "no GitHub runners detected".
+# This file uses a literal label on purpose. Let the wizard rewrite THIS file
+# only. It must never rewrite arm-a.yml or seed.yml: arm-a carries the
+# GitHub-hosted baseline that every ratio is measured against, and converting
+# it would delete the control.
+#
+# After the wizard's pull request merges, this workflow runs on Blacksmith and
+# prints the machine it landed on.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Report the machine that claimed this job
+        run: |
+          echo "runner_name=${RUNNER_NAME:-unknown}"
+          echo "nproc=$(nproc)"
+          echo "mem_gb=$(awk '/MemTotal/{printf "%.1f", $2/1048576}' /proc/meminfo)"
+          echo "cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)"
+          echo "os=$(. /etc/os-release; echo "$PRETTY_NAME")"
