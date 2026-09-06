@@ -8,6 +8,13 @@ name: arm-a
 # The vendors input lets a run target only the integrations that are live.
 # A vendor whose runners never claim a job would otherwise leave seven jobs
 # queued per slot for 24 hours.
+#
+# Scheduled runs read the repository variable BENCH_VENDORS. Widen it as each
+# vendor comes online, with no commit and no redeploy:
+#   gh variable set BENCH_VENDORS --repo ci-runners-org/ci-runner-bench \
+#     --body "github,blacksmith,namespace,warpbuild"
+# It defaults to github alone, so a cron firing early is free and strands
+# nothing.
 
 on:
   # Compressed cadence. The collection window is one evening, not two days,
@@ -44,7 +51,7 @@ jobs:
       - id: m
         uses: ./.github/actions/runner-matrix
         with:
-          vendors: ${{ inputs.vendors || 'github,blacksmith,namespace,warpbuild' }}
+          vendors: ${{ inputs.vendors || vars.BENCH_VENDORS || 'github' }}
 
   bench:
     name: "a|${{ matrix.runner.vendor }}|${{ matrix.workload }}|${{ matrix.cache }}"

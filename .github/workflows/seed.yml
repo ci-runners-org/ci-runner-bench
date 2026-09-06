@@ -34,7 +34,7 @@ jobs:
       - id: m
         uses: ./.github/actions/runner-matrix
         with:
-          vendors: ${{ inputs.vendors || 'github,blacksmith,namespace,warpbuild' }}
+          vendors: ${{ inputs.vendors || vars.BENCH_VENDORS || 'github' }}
 
   seed:
     name: "seed|${{ matrix.runner.vendor }}|${{ matrix.workload }}"
