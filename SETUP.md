@@ -1,10 +1,71 @@
 # Setup runbook
 
-Target: first scheduled slot runs Saturday 2026-09-05 at 02:30 IST.
 Deadline: verdict table ready Monday 2026-09-07 at 09:00 IST.
+Times are IST.
 
-Times are IST. GitHub cron is UTC, so `0 */3 * * *` fires at 05:30, 08:30,
-11:30 IST and so on.
+## Status as of Sunday 2026-09-06, 16:15 IST
+
+The Saturday window was lost, so the cadence is compressed. `arm-a` now runs
+every 30 minutes and `arm-b` every hour. Sixteen slots need an eight-hour
+window, so collection must open by about 18:00 IST.
+
+| Component | State |
+| --- | --- |
+| Repository, workflows, collector | Done and pushed |
+| GitHub baseline runner | Verified, 20 of 20 jobs green |
+| Blacksmith runners | App installed org-wide, **no runner claims jobs** |
+| WarpBuild runners | App installed org-wide, **no runner claims jobs** |
+| Namespace runners | **App not installed** |
+
+A label probe claimed nine candidate labels. Only `ubuntu-24.04` started. All
+three Blacksmith variants and both WarpBuild variants stayed queued, so the
+cause is vendor activation, not a wrong label.
+
+## Blocking step: activate the three vendors
+
+Run `probe.yml` after each fix. A label that starts is live. A label that stays
+queued is not.
+
+```bash
+gh workflow run probe.yml --repo ci-runners-org/ci-runner-bench
+sleep 90
+RID=$(gh run list --repo ci-runners-org/ci-runner-bench --workflow probe.yml \
+        --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run view "$RID" --repo ci-runners-org/ci-runner-bench --json jobs \
+  --jq '.jobs[] | "\(.status)  \(.name)"' | sort
+gh run cancel "$RID" --repo ci-runners-org/ci-runner-bench
+```
+
+Always cancel the probe. Queued jobs otherwise sit for 24 hours and can start
+at random later, which pollutes the timings.
+
+| Vendor | What to check |
+| --- | --- |
+| Blacksmith | Open the dashboard, confirm `ci-runners-org` appears and is active. Select the free plan if prompted. Installing the app alone does not start the runner fleet. |
+| WarpBuild | Open the dashboard, confirm the org is connected and a Linux x64 runner is enabled. Confirm the exact label string offered for 4 vCPU. |
+| Namespace | The app is not installed. Install it on `ci-runners-org`, then create a runner profile named exactly `bench-4x16` with 4 vCPU, 16 GB, Linux amd64. |
+
+If a vendor offers a different label, change it everywhere at once:
+
+```bash
+grep -rl 'OLD-LABEL' .github/ | xargs sed -i '' 's/OLD-LABEL/NEW-LABEL/g'
+```
+
+## Revised timeline
+
+| Time IST | Step | Notes |
+| --- | --- | --- |
+| now to 18:00 | Activate the three vendors, re-run `probe.yml` until all labels start | Blocking |
+| +15 min | `gh workflow run seed.yml` | About 45 min wall clock |
+| +60 min | Enable `arm-a` and `arm-b`, dispatch one slot of each | Every warm job must hit its cache |
+| then to 01:30 | Cron collects unattended | 30-minute cadence |
+| 01:30 | `gh workflow run burst.yml`, cancel after 3 min | Queue-time samples |
+| 02:00 | Run the collector and the analysis | |
+
+Drop-dead time is 22:00 IST. Opening collection later than that gives fewer
+than six slots per cell, which cannot resolve any ratio below about 2.0. If
+that happens, report the GitHub baseline and the vendor gap as indicative
+only, and say so plainly.
 
 ## Part 1: what only you can do
 
