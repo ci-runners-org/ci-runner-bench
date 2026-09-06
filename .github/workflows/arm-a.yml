@@ -27,7 +27,7 @@ on:
       vendors:
         description: "Comma-separated vendors to measure"
         required: false
-        default: "github,blacksmith,namespace,warpbuild"
+        default: "github,blacksmith"
 
 permissions:
   contents: read

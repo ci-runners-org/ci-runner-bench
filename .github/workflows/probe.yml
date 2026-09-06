@@ -23,17 +23,9 @@ jobs:
       matrix:
         include:
           - { vendor: github, label: ubuntu-24.04 }
-
           - { vendor: blacksmith, label: blacksmith }
           - { vendor: blacksmith, label: blacksmith-2vcpu-ubuntu-2404 }
           - { vendor: blacksmith, label: blacksmith-4vcpu-ubuntu-2404 }
-
-          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-2x }
-          - { vendor: warpbuild, label: warp-ubuntu-latest-x64-4x }
-
-          - { vendor: namespace, label: nscloud }
-          - { vendor: namespace, label: nscloud-ubuntu-24.04-amd64-4x8 }
-          - { vendor: namespace, label: namespace-profile-bench-4x16 }
 
     steps:
       - name: Identify the machine that claimed this label

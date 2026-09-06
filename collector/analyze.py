@@ -23,7 +23,7 @@ import sys
 from collections import defaultdict
 
 BASELINE = "github"
-VENDORS = ["blacksmith", "namespace", "warpbuild"]
+VENDORS = ["blacksmith"]
 BOOTSTRAP = 10_000
 PAYLOAD_MB = 512
 
@@ -43,13 +43,15 @@ PRICE_PER_MIN = {
 #             "abs_ge"   needs the absolute value >= threshold
 #             "report"   no threshold, record the number
 CLAIMS = [
-    ("B1", "blacksmith", "2x faster than GitHub's runners",
+    ("B1", "blacksmith", "2x faster than GitHub's runners, monorepo warm",
      "speedup:w1:warm", "ratio_ge", 1.8),
-    ("B1b", "blacksmith", "2x faster, Rust build",
+    ("B1b", "blacksmith", "2x faster than GitHub's runners, Rust build",
      "speedup:w2:warm", "ratio_ge", 1.8),
+    ("B1c", "blacksmith", "2x faster, monorepo cold",
+     "speedup:w1:cold", "ratio_ge", 1.8),
     ("B2", "blacksmith", "4x faster cache downloads, 400MB/s",
      "cache_restore_mbps", "abs_ge", 350.0),
-    ("B2r", "blacksmith", "4x faster cache downloads, ratio form",
+    ("B2r", "blacksmith", "4x faster cache downloads, ratio against GitHub",
      "speedup:cache_restore", "ratio_ge", 3.5),
     ("B3", "blacksmith", "2x to 40x faster Docker builds",
      "speedup:w4:warm", "ratio_ge", 2.0),
@@ -57,20 +59,8 @@ CLAIMS = [
      "queue_p50", "abs_le", 3.0),
     ("B5", "blacksmith", "67% total cost savings",
      "cost_ratio:w1:warm", "ratio_ge", 3.0),
-    ("N1", "namespace", "Cache volumes give instant access",
-     "cache_restore_s", "abs_le", 5.0),
-    ("N2", "namespace", "Image pulls in seconds rather than minutes",
-     "image_pull_s", "abs_le", 15.0),
-    ("N3", "namespace", "Monorepo speed",
-     "speedup:w1:warm", "report", None),
-    ("W1c", "warpbuild", "2-10x faster builds, monorepo",
-     "speedup:w1:warm", "ratio_ge", 2.0),
-    ("W1d", "warpbuild", "2-10x faster builds, Rust",
-     "speedup:w2:warm", "ratio_ge", 2.0),
-    ("W2c", "warpbuild", "50% cheaper than GitHub Actions",
-     "cost_ratio:w1:warm", "ratio_ge", 2.0),
-    ("W3c", "warpbuild", "Cold start under 10 seconds",
-     "queue_p50", "abs_le", 10.0),
+    ("B6", "blacksmith", "Lightweight jobs may gain little or become slower",
+     "speedup:w5:cold", "report", None),
 ]
 
 # Claims recorded for every vendor with no pass threshold.
@@ -143,11 +133,29 @@ def workload_step_seconds(steps: list[dict]) -> dict[str, float]:
     return out
 
 
+def paired_runs(jobs: list[dict]) -> set:
+    """Run ids where the baseline and at least one vendor both succeeded.
+
+    Vendors are activated at different times, so an unpaired slot would
+    compare a GitHub evening measurement against a vendor night measurement.
+    Restricting to paired slots keeps the same-wall-clock control intact.
+    """
+    seen: dict[str, set] = defaultdict(set)
+    for row in jobs:
+        if row["arm"] in ("a", "b") and row["conclusion"] == "success":
+            seen[row["run_id"]].add(row["vendor"])
+
+    return {r for r, v in seen.items()
+            if BASELINE in v and len(v - {BASELINE}) > 0}
+
+
 def gather(jobs: list[dict], steps: list[dict]) -> dict:
     """Build the metric store: metric key -> vendor -> list of samples."""
     store: dict[str, dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list))
     work_s = workload_step_seconds(steps)
+    paired = paired_runs(jobs)
+    store["unpaired"]["_"] = []
 
     for row in jobs:
         vendor, workload = row["vendor"], row["workload"]
@@ -163,6 +171,12 @@ def gather(jobs: list[dict], steps: list[dict]) -> dict:
 
         if arm == "burst" and queue is not None:
             store["queue"][vendor].append(queue)
+            continue
+
+        # Skip slots that ran only one runner. Those timings are real but not
+        # comparable, because nothing controls for time of day.
+        if arm in ("a", "b") and row["run_id"] not in paired:
+            store["unpaired"]["_"].append(1.0)
             continue
 
         if duration is None:
@@ -303,7 +317,12 @@ def write_verdicts(store: dict, out_dir: str) -> None:
         cells = [fmt(resolve(store, metric, v)[0]) for v in VENDORS]
         lines.append(f"| {cid} | {text} | `{metric}` | " + " | ".join(cells) + " |")
 
-    lines += ["", "## Reliability", "",
+    skipped = len(store.get("unpaired", {}).get("_", []))
+    lines += ["", "## Sampling", "",
+              f"Unpaired job rows skipped: {skipped}. A slot counts only when "
+              "the baseline and a vendor both ran in it, so every ratio "
+              "compares the same wall-clock window.",
+              "", "## Reliability", "",
               "| Vendor | Failed or cancelled jobs |",
               "| --- | --- |"]
     for vendor in [BASELINE] + VENDORS:
