@@ -14,6 +14,12 @@ name: blacksmith-check
 # prints the machine it landed on.
 
 on:
+  # push is included deliberately. If a runner fleet only reacts to push or
+  # pull_request webhooks and ignores workflow_dispatch, this distinguishes
+  # that from the fleet not being provisioned at all.
+  push:
+    branches: [main]
+    paths: [".github/workflows/blacksmith-check.yml"]
   workflow_dispatch:
 
 permissions:
