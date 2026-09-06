@@ -10,7 +10,7 @@ WORKDIR /app
 # churn.txt changes every run, so this layer and everything after it rebuild.
 COPY churn.txt ./
 RUN node -e "const fs=require('fs');\
-const n=Number(process.env.N||400);\
+const n=Number(process.env.N||2500);\
 fs.mkdirSync('gen',{recursive:true});\
 for(let i=0;i<n;i++){fs.writeFileSync('gen/m'+i+'.ts','export const v'+i+': number = '+i+';\n');}" \
  && ./node_modules/.bin/tsc --noEmit --skipLibCheck gen/*.ts \

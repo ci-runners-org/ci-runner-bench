@@ -126,7 +126,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.bench-cache
-          key: bench-a-${{ matrix.runner.vendor }}-${{ matrix.workload }}-v1
+          key: bench-a-${{ matrix.runner.vendor }}-${{ matrix.workload }}-v2
 
       - name: Fail if the warm arm found no cache
         if: matrix.cache == 'warm' && matrix.workload != 'w4' && steps.restore.outputs.cache-hit != 'true'

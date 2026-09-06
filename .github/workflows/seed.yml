@@ -98,7 +98,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.bench-cache
-          key: bench-a-${{ matrix.runner.vendor }}-${{ matrix.workload }}-v1
+          key: bench-a-${{ matrix.runner.vendor }}-${{ matrix.workload }}-v2
 
   seed-docker:
     name: "seed|${{ matrix.runner.vendor }}|w4"

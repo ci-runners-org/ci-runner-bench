@@ -25,7 +25,10 @@ case "$WL" in
     # which isolates CPU for the speed claims.
     export CARGO_TARGET_DIR="$RUNNER_TEMP/cargo-target"
     cd "$GITHUB_WORKSPACE/work"
-    cargo build --release --locked
+    # --all-targets also builds tests, benches and examples. Without it the
+    # release build finishes in about 20 seconds on 4 vCPU, which is too short
+    # to separate a 2x CPU difference from setup overhead.
+    cargo build --release --locked --all-targets
     cargo test --release --locked
     ;;
 

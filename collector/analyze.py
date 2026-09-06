@@ -4,6 +4,10 @@
 Standard library only. GitHub-hosted runners are the baseline for every ratio.
 A ratio above 1.0 means the vendor is faster or cheaper than GitHub.
 
+Speed is measured on the "Run workload" step. Cost is measured on whole-job
+duration, because that is what vendors bill. The gap between the two is
+reported separately as setup overhead.
+
 Usage:
   python3 collector/analyze.py
   python3 collector/analyze.py --raw results/raw --out results/tables
@@ -120,10 +124,30 @@ def bootstrap_ratio_ci(base: list[float], vendor: list[float],
     return percentile(ratios, 0.025), percentile(ratios, 0.975)
 
 
+def workload_step_seconds(steps: list[dict]) -> dict[str, float]:
+    """Map job id to the duration of its "Run workload" step.
+
+    Speed claims are measured on this step, not on the whole job. Checkout,
+    toolchain setup and cache restore are fixed overheads that differ between
+    runner images. On a short workload they can be half the job, which dilutes
+    a real CPU difference. Cost still uses whole-job duration, because that is
+    what every vendor bills.
+    """
+    out: dict[str, float] = {}
+    for row in steps:
+        if (row["step_name"] or "").strip() != "Run workload":
+            continue
+        seconds = as_float(row["step_duration_s"])
+        if seconds is not None and row["step_conclusion"] == "success":
+            out[row["job_id"]] = seconds
+    return out
+
+
 def gather(jobs: list[dict], steps: list[dict]) -> dict:
     """Build the metric store: metric key -> vendor -> list of samples."""
     store: dict[str, dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list))
+    work_s = workload_step_seconds(steps)
 
     for row in jobs:
         vendor, workload = row["vendor"], row["workload"]
@@ -144,14 +168,19 @@ def gather(jobs: list[dict], steps: list[dict]) -> dict:
         if duration is None:
             continue
 
+        # Prefer the workload step. Fall back to the job when the step is
+        # missing, for example on a job that failed before it ran.
+        work = work_s.get(row["job_id"], duration)
+
         if arm == "a" and workload in ("w1", "w2", "w4", "w5"):
-            store[f"dur:{workload}:{cache_arm}"][vendor].append(duration)
+            store[f"dur:{workload}:{cache_arm}"][vendor].append(work)
+            store[f"job:{workload}:{cache_arm}"][vendor].append(duration)
             billable = -(-duration // 60)
             store[f"cost:{workload}:{cache_arm}"][vendor].append(
                 billable * PRICE_PER_MIN.get(vendor, 0.0))
 
         if arm == "b" and workload in ("w1", "w2"):
-            store[f"durB:{workload}:{cache_arm}"][vendor].append(duration)
+            store[f"durB:{workload}:{cache_arm}"][vendor].append(work)
 
     for row in steps:
         name = (row["step_name"] or "").strip()
@@ -312,6 +341,24 @@ def write_durations(store: dict, out_dir: str) -> None:
             best = f"{max(ratios):.2f}x" if ratios else "n/a"
             lines.append(f"| {workload} | {arm} | " + " | ".join(cells) +
                          f" | {best} |")
+
+    lines += ["", "# Setup overhead", "",
+              "Whole job minus the workload step. A vendor with a heavier",
+              "runner image pays this on every job regardless of CPU speed.", "",
+              "| Workload | Cache | " + " | ".join([BASELINE] + VENDORS) + " |",
+              "| --- | --- | " + " | ".join("---" for _ in range(len(VENDORS) + 1))
+              + " |"]
+
+    for workload in ("w1", "w2", "w4", "w5"):
+        for arm in ("cold", "warm"):
+            if not store.get(f"dur:{workload}:{arm}"):
+                continue
+            cells = []
+            for vendor in [BASELINE] + VENDORS:
+                job = median_of(store, f"job:{workload}:{arm}", vendor)
+                work = median_of(store, f"dur:{workload}:{arm}", vendor)
+                cells.append(f"{job - work:.0f}s" if job and work else "n/a")
+            lines.append(f"| {workload} | {arm} | " + " | ".join(cells) + " |")
 
     lines += ["", "# Cache and boot metrics", "",
               "| Metric | " + " | ".join([BASELINE] + VENDORS) + " |",
